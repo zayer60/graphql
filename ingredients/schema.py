@@ -2,8 +2,10 @@ import graphene
 from graphene_django import DjangoObjectType
 from graphene_django.filter import DjangoFilterConnectionField
 from .models import *
+from graphql_relay.node.node import from_global_id
 import django_filters
-
+from graphene_django_extras import DjangoListObjectType, DjangoFilterPaginateListField, PageGraphqlPagination
+from graphene_django_extras.paginations import LimitOffsetGraphqlPagination
 
 class CategoryNode(DjangoObjectType):
     class Meta:
@@ -45,10 +47,16 @@ class IngredientType(DjangoObjectType):
     class Meta:
         model = Ingredient
         fields = ("id", "name", "notes", "category")
+        filter_fields = {
+            'name': ['exact', 'icontains', 'istartswith'],
+            'notes': ['exact', 'icontains'],
+            'category': ['exact'],
+            'category__name': ['exact'],
+        }
 
 
 class Query(graphene.ObjectType):
-    all_ingredients = graphene.List(IngredientType)
+    all_ingredients = DjangoFilterPaginateListField(IngredientType,pagination=PageGraphqlPagination())
     get_category = graphene.Field(CategoryType, name=graphene.String(required=True))
 
     def resolve_all_ingredients(root, info):
@@ -173,7 +181,44 @@ class RelayCreateIngredient(graphene.ClientIDMutation):
                                         category=category)
         # ing = Ingredient(name=ingredient_data.name, notes=ingredient_data.notes, category=category)
         # ing.save()
-        return CreateIngredient(ing=ing)
+        return RelayCreateIngredient(ing=ing)
+
+
+class RelayUpdateIngredient(graphene.ClientIDMutation):
+    class Input:
+        id = graphene.String()
+        name = graphene.String()
+        notes = graphene.String()
+        category_id = graphene.String()
+
+    ing = graphene.Field(IngredientNode)
+
+    @classmethod
+    def mutate_and_get_payload(cls,root, info, **input):
+        category = Category.objects.get(pk=from_global_id(input.get('category_id'))[1])
+        # print(type(category))
+        ing = Ingredient.objects.get(pk=from_global_id(input.get('id'))[1])
+        ing.name = input.get('name')
+        ing.notes = input.get('notes')
+        ing.category = category
+        ing.save()
+
+
+        return RelayUpdateIngredient(ing=ing)
+
+
+class RelayDeleteIngredient(graphene.ClientIDMutation):
+    class Input:
+        id = graphene.String()
+
+    ing = graphene.Field(IngredientNode)
+
+    @classmethod
+    def mutate_and_get_payload(cls,root, info, **input):
+        ing = Ingredient.objects.get(pk=from_global_id(input.get('id'))[1])
+        ing.delete()
+
+        return RelayDeleteIngredient(ing=ing)
 
 
 class Mutation(graphene.ObjectType):
@@ -184,3 +229,5 @@ class Mutation(graphene.ObjectType):
     updateIngredient = UpdateIngredient.Field()
     deleteIngredient = DeleteIngredient.Field()
     relayCreateIngredient = RelayCreateIngredient.Field()
+    relayUpdateIngredient = RelayUpdateIngredient.Field()
+    relayDeleteIngredient = RelayDeleteIngredient.Field()
